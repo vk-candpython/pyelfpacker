@@ -47,7 +47,7 @@
 
 ## 📋 Overview
 
-**PyELFPacker** — is a powerful ELF binary obfuscation and packing tool that transforms standard Linux executables into heavily protected, self-decrypting binaries with fileless execution capabilities. Written in Python, it leverages a custom C stub, RLE compression, XOR stream cipher, and a built‑in `sstrip` to produce extremely stripped “ghost” binaries.
+**PyELFPacker** — is a powerful ELF binary obfuscation and packing tool that transforms standard Linux executables into heavily protected, self-decrypting binaries with fileless execution capabilities. Written in Python, it leverages a custom C stub, RLE compression, XOR stream cipher, and a built‑in `elfstrip` to produce extremely stripped “ghost” binaries.
 
 ### What makes it unique?
 
@@ -57,10 +57,10 @@
 | **XOR Stream Cipher** | 16–128 byte key + salt + feedback mechanism – each byte depends on previous state |
 | **Polymorphic C Stub** | Random identifier names from 129‑char alphabet (Latin + Cyrillic + Ukrainian) per build |
 | **Dead Code Injection** | 150+ combinatorial ASM patterns + random C junk statements (enabled via `--obf`) |
-| **Embedded SSTRIP** | Pre‑compiled `sstrip` binary embedded in the Python script – removes section headers |
+| **Embedded elfstrip** | Pre‑compiled `elfstrip` binary embedded in the Python script – removes section headers |
 | **Polyglot Signatures** | 27 different file format headers injected into the linker script |
 | **Fileless Execution** | `memfd_create` + `execveat` with `AT_EMPTY_PATH` – zero disk trace |
-| **Anti‑Debug & Anti‑VM** | TracerPid check, `PR_SET_PTRACER`, `PR_SET_DUMPABLE`, mlockall (anti‑VM is stubbed) |
+| **Anti‑Debug & Anti‑VM** | TracerPid check, `PR_SET_PTRACER`, `PR_SET_DUMPABLE`, mlockall, **CPUID hypervisor detection** |
 | **Memory Protection** | mlockall + F_SEAL_ALL – prevents swapping and memory modification |
 | **Highly Optimised Builder** | Memoryviews, pre‑allocated buffers, single‑pass compression, GC control |
 
@@ -82,8 +82,8 @@
 |---------|-------------|
 | 🏗️ **MUSL/GCC Auto‑detect** | Prefers MUSL (smaller output), falls back to GCC |
 | 📦 **Custom Linker Script** | Random base address (0x400000 + random*0x1000), discards unused sections |
-| 🚫 **Compiler Flags** | `-Os -static-pie -fomit-frame-pointer -fno-stack-protector -Wl,--strip-all` |
-| 🧹 **SSTRIP** | Embedded `sstrip` – removes section headers completely, breaks `objdump`, `readelf`, `gdb` |
+| 🚫 **Compiler Flags** | `-O3 -static-pie -fomit-frame-pointer -fno-stack-protector -Wl,--strip-all` |
+| 🧹 **ELFSTRIP** | Embedded `elfstrip` – removes section headers completely, breaks `objdump`, `readelf`, `gdb` |
 
 ### Runtime Protection
 
@@ -96,7 +96,7 @@
 | 📵 **No Core Dumps** | `prctl(PR_SET_DUMPABLE, 0)` – blocks gcore and coredumps |
 | 🔐 **Memory Lock** | `mlockall(MCL_ALL)` – prevents swapping to disk |
 | 🔏 **Sealed Memory FD** | `fcntl(F_ADD_SEALS, F_SEALS_ALL)` – prevents modification before exec |
-| 🛡️ **Anti‑VM** | Placeholder; can be extended (currently stubbed) |
+| 🛡️ **Anti‑VM** | **CPUID hypervisor bit check** (ECX bit 31) – detects virtualization, triggers exit when set |
 
 ### Polyglot Signatures (27 formats)
 
@@ -161,8 +161,8 @@ PHASE 5: C COMPILATION
 ├── 20+ aggressive compiler flags for size and stealth
 └── Custom linker script with discarded sections
 
-PHASE 6: SSTRIP
-├── Embedded pre‑compiled SSTRIP binary (~13 KB)
+PHASE 6: ELFSTRIP
+├── Embedded pre‑compiled elfstrip binary (~13 KB)
 ├── Truncates section header table
 └── Result: "ghost" ELF — runs but has no visible sections
 ```
@@ -254,6 +254,10 @@ The inverse of the encryption function: subtract `(y ^ 0xA5)`, rotate right 3, X
 
 The string `/proc/self/status` is encrypted in the binary. The macro decrypts it at runtime, opens the file, and searches for an obfuscated `TracerPid:` pattern (each character XORed with different keys). Returns the TracerPid value: 0 = clean, >0 = debugger detected. All buffers are securely zeroed before return.
 
+### ANTIVM Macro
+
+When the `--vm` flag is enabled, the generated loader includes an anti‑VM check. It executes `CPUID` with EAX=1 and tests bit 31 of ECX (the hypervisor present bit). If this bit is set, the binary immediately exits (or executes a dead‑code exit path). This detection method is fast, lightweight, and does not rely on parsing `/proc` or other easily spoofed indicators.
+
 ### Fileless Execution
 
 The payload is decrypted and decompressed directly into a memory file descriptor created via `memfd_create`. The fd is then sealed with `F_SEAL_ALL` to prevent any modification before execution via `execveat` with `AT_EMPTY_PATH`.
@@ -274,7 +278,7 @@ Uses `rep stosq` in reverse direction (DF=1) to zero sensitive buffers. Reverse 
 | **Pre‑allocated Buffers** | Exact size calculation for RLE output |
 | **MADV_SEQUENTIAL** | Hint kernel for sequential access |
 | **Chunked I/O** | 4 KB chunks for large files |
-| **Pre‑compiled SSTRIP** | Embedded as bytes, written once per session |
+| **Pre‑compiled elfstrip** | Embedded as bytes, written once per session |
 | **Single‑pass Compression** | RLE compresses in one pass |
 | **In‑place Encryption** | XOR modifies buffer directly |
 | **GC Control** | `gc.disable()` + manual `gc.collect()` |
@@ -316,7 +320,7 @@ original_elf  →  pyelfpacker-original_elf
 | Obfuscated binary segfaults | Original may need dynamic libraries |
 | `gdb` still attaches | Use `PR_SET_PTRACER` + TracerPid |
 | Binary size increased | Normal for very small binaries |
-| `--vm` flag has no effect | Anti‑VM is a placeholder (stubbed) |
+| `--vm` flag causes exit in VM | Anti‑VM detection triggers; run on physical hardware |
 
 ---
 
@@ -324,7 +328,7 @@ original_elf  →  pyelfpacker-original_elf
 
 ## 📋 Обзор
 
-**PyELFPacker** — мощный инструмент для обфускации и упаковки ELF‑бинарников, превращающий стандартные исполняемые файлы Linux в сильно защищённые, саморасшифровывающиеся программы с бесфайловым выполнением. Написан на Python, использует кастомный C‑стаб, RLE‑сжатие, потоковый XOR‑шифр и встроенный `sstrip` для создания «призрачных» бинарников без заголовков секций.
+**PyELFPacker** — мощный инструмент для обфускации и упаковки ELF‑бинарников, превращающий стандартные исполняемые файлы Linux в сильно защищённые, саморасшифровывающиеся программы с бесфайловым выполнением. Написан на Python, использует кастомный C‑стаб, RLE‑сжатие, потоковый XOR‑шифр и встроенный `elfstrip` для создания «призрачных» бинарников без заголовков секций.
 
 ### Что делает его уникальным?
 
@@ -334,10 +338,10 @@ original_elf  →  pyelfpacker-original_elf
 | **Потоковый XOR‑шифр** | Ключ 16–128 байт + соль + обратная связь – каждый байт зависит от предыдущих |
 | **Полиморфный C‑стаб** | Случайные имена из 129‑символьного алфавита (латиница + кириллица + украинский) |
 | **Впрыск мёртвого кода** | 150+ комбинаторных ASM‑паттернов + случайный мусор в C (включается через `--obf`) |
-| **Встроенный SSTRIP** | Предскомпилированный бинарник `sstrip` встроен в Python‑скрипт – удаляет заголовки секций |
+| **Встроенный elfstrip** | Предскомпилированный бинарник `elfstrip` встроен в Python‑скрипт – удаляет заголовки секций |
 | **Полиглот‑сигнатуры** | 27 различных заголовков форматов файлов |
 | **Бесфайловое выполнение** | `memfd_create` + `execveat` с `AT_EMPTY_PATH` – нулевой след на диске |
-| **Анти‑отладка & Анти‑VM** | Проверка TracerPid, `PR_SET_PTRACER`, `PR_SET_DUMPABLE`, mlockall (анти‑VM заглушка) |
+| **Анти‑отладка & Анти‑VM** | Проверка TracerPid, `PR_SET_PTRACER`, `PR_SET_DUMPABLE`, mlockall, **обнаружение гипервизора через CPUID** |
 | **Защита памяти** | mlockall + F_SEAL_ALL – предотвращает свопинг и модификацию памяти |
 | **Оптимизированный билдер** | Memoryviews, предварительно выделенные буферы, однопроходное сжатие, контроль GC |
 
@@ -359,8 +363,8 @@ original_elf  →  pyelfpacker-original_elf
 |-------------|----------|
 | 🏗️ **Автовыбор MUSL/GCC** | Предпочитает MUSL (меньший размер), откат к GCC |
 | 📦 **Кастомный линкер‑скрипт** | Случайный базовый адрес, сбрасывает все неиспользуемые секции |
-| 🚫 **Флаги компилятора** | `-Os -static-pie -fomit-frame-pointer -fno-stack-protector -Wl,--strip-all` |
-| 🧹 **SSTRIP** | Встроенный `sstrip` – полное удаление заголовков секций, ломает `objdump`, `readelf`, `gdb` |
+| 🚫 **Флаги компилятора** | `-O3 -static-pie -fomit-frame-pointer -fno-stack-protector -Wl,--strip-all` |
+| 🧹 **ELFSTRIP** | Встроенный `elfstrip` – полное удаление заголовков секций, ломает `objdump`, `readelf`, `gdb` |
 
 ### Защита времени выполнения
 
@@ -373,7 +377,7 @@ original_elf  →  pyelfpacker-original_elf
 | 📵 **Запрет core‑дампов** | `prctl(PR_SET_DUMPABLE, 0)` |
 | 🔐 **Блокировка памяти** | `mlockall(MCL_ALL)` |
 | 🔏 **Запечатанный memory FD** | `fcntl(F_ADD_SEALS, F_SEALS_ALL)` |
-| 🛡️ **Анти‑VM** | Заглушка; может быть расширена (пока не реализована) |
+| 🛡️ **Анти‑VM** | **Проверка бита гипервизора CPUID** (ECX бит 31) – обнаружение виртуализации, выход при обнаружении |
 
 ## 🔒 Полный конвейер защиты
 
@@ -406,6 +410,10 @@ python3 pyelfpacker.py --obf --debug /bin/ls
 
 Строка `/proc/self/status` зашифрована в бинарнике. Макрос расшифровывает её во время выполнения, открывает файл и ищет обфусцированный паттерн `TracerPid:` (каждый символ XOR с разными ключами). Возвращает значение TracerPid: 0 = чисто, >0 = обнаружен отладчик. Все буферы безопасно затираются перед возвратом.
 
+### Макрос ANTIVM
+
+При включении флага `--vm` в генерируемый загрузчик добавляется проверка на виртуальную машину. Она выполняет инструкцию `CPUID` с EAX=1 и проверяет бит 31 регистра ECX (бит присутствия гипервизора). Если этот бит установлен, бинарник немедленно завершается (или выполняет путь выхода с мёртвым кодом). Этот метод быстр, лёгок и не полагается на парсинг `/proc` или другие легко подделываемые индикаторы.
+
 ### Бесфайловое выполнение
 
 Полезная нагрузка расшифровывается и распаковывается напрямую в файловый дескриптор в памяти, созданный через `memfd_create`. Затем fd запечатывается с `F_SEAL_ALL` для предотвращения любых модификаций перед выполнением через `execveat` с `AT_EMPTY_PATH`.
@@ -422,7 +430,7 @@ python3 pyelfpacker.py --obf --debug /bin/ls
 | **Предвыделенные буферы** | Точный расчёт размера для RLE |
 | **MADV_SEQUENTIAL** | Подсказка ядру о последовательном доступе |
 | **Чанковый I/O** | Блоки по 4 КБ для больших файлов |
-| **Предскомпилированный SSTRIP** | Встроен как байты, записывается один раз |
+| **Предскомпилированный elfstrip** | Встроен как байты, записывается один раз |
 | **Однопроходное сжатие** | RLE сжимает за один проход |
 | **Шифрование на месте** | XOR модифицирует буфер напрямую |
 | **Контроль GC** | `gc.disable()` + ручной `gc.collect()` |
@@ -457,7 +465,7 @@ python3 pyelfpacker.py --obf --debug /bin/ls
 | Обфусцированный бинарник падает | Оригинал может требовать динамические библиотеки |
 | `gdb` всё ещё цепляется | Используй `PR_SET_PTRACER` + TracerPid |
 | Размер бинарника увеличился | Нормально для очень маленьких бинарников |
-| Флаг `--vm` не работает | Анти‑VM — заглушка (пока не реализована) |
+| Флаг `--vm` вызывает выход в VM | Срабатывает анти‑VM детекция; запускай на физическом железе |
 
 ---
 
