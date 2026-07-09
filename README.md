@@ -1,4 +1,5 @@
-# 👾 PyELFPacker – Advanced ELF Binary Protector
+# 👾 pyelfpacker
+
 
 <div align="center">
 
@@ -46,7 +47,7 @@
 
 ## 📋 Overview
 
-**PyELFPacker** is a powerful ELF binary obfuscation and packing tool that transforms standard Linux executables into heavily protected, self-decrypting binaries with fileless execution capabilities. Written in Python, it leverages a custom C stub, RLE compression, XOR stream cipher, and a built‑in `sstrip` to produce extremely stripped “ghost” binaries.
+**PyELFPacker** — is a powerful ELF binary obfuscation and packing tool that transforms standard Linux executables into heavily protected, self-decrypting binaries with fileless execution capabilities. Written in Python, it leverages a custom C stub, RLE compression, XOR stream cipher, and a built‑in `sstrip` to produce extremely stripped “ghost” binaries.
 
 ### What makes it unique?
 
